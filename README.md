@@ -50,7 +50,7 @@ Azure Blob Storage (raw files)
 ┌─────────────────────────────────────────┐
 │           ANALYTICS LAYER               │
 │  Snowpark Python scoring & anomaly      │
-│  detection + Looker Studio dashboard    │
+│  detection + Power BI dashboard    │
 └─────────────────────────────────────────┘
 ```
 
@@ -68,7 +68,7 @@ Azure Blob Storage (raw files)
 | Transformation | Snowflake Dynamic Tables |
 | Python Processing | Snowpark Python |
 | Governance | Snowflake RBAC, Masking Policies, Row Access Policies |
-| Visualization | Looker Studio |
+| Visualization | Power BI |
 | Architecture Pattern | Medallion (Bronze / Silver / Gold) |
 
 ---
@@ -140,7 +140,7 @@ Four roles are implemented with explicit privilege separation: bpo_admin, bpo_an
    b. Invalid rows → Quarantine (with error reason)
 7. Dynamic Tables auto-refresh Gold KPIs every 2-5 minutes
 8. Snowpark scores agents and detects anomalies
-9. Looker Studio reads Gold views for dashboards
+9. Power BI reads Gold views for dashboards
 ```
 
 ---
@@ -156,7 +156,7 @@ Four roles are implemented with explicit privilege separation: bpo_admin, bpo_an
 
 ---
 
-## Dashboard (Looker Studio)
+## Dashboard (Power BI)
 
 Six reporting pages connected to Snowflake Gold views:
 
