@@ -1,4 +1,5 @@
 # BPO Analytics Platform
+## [*SQL and Python code to follow*]
 ### End-to-End Data Pipeline | Azure + Snowflake | Medallion Architecture
 
 ---
