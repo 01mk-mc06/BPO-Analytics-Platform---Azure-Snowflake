@@ -14,7 +14,9 @@ This project was designed to mirror real enterprise patterns used in large-scale
 
 ## Architecture
 
+
 ```
+
 Azure Blob Storage (raw files)
                  │
                  ▼
@@ -50,8 +52,9 @@ Azure Blob Storage (raw files)
 ┌─────────────────────────────────────────┐
 │           ANALYTICS LAYER               │
 │  Snowpark Python scoring & anomaly      │
-│  detection + Power BI dashboard    │
+│  detection + Power BI dashboard         │
 └─────────────────────────────────────────┘
+
 ```
 
 ---
