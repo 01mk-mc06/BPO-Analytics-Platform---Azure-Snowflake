@@ -16,37 +16,37 @@ This project was designed to mirror real enterprise patterns used in large-scale
 
 ```
 Azure Blob Storage (raw files)
-        │
-        ▼
+                 │
+                 ▼
 ┌─────────────────────────────────────────┐
 │           BRONZE LAYER                  │
 │  Raw ingestion via Snowpipe + Event Grid│
 │  Self-healing quarantine system         │
 └─────────────────────────────────────────┘
-        │
-        ▼
+                 │
+                 ▼
 ┌─────────────────────────────────────────┐
 │           SILVER LAYER                  │
 │  Incremental processing via Streams     │
 │  Validation, standardization, flagging  │
 └─────────────────────────────────────────┘
-        │
-        ▼
+                 │
+                 ▼
 ┌─────────────────────────────────────────┐
 │           GOLD LAYER                    │
 │  Auto-refreshing KPIs via Dynamic Tables│
 │  Agent scorecards, team performance,    │
 │  ticket analytics, queue health         │
 └─────────────────────────────────────────┘
-        │
-        ▼
+                 │
+                 ▼
 ┌─────────────────────────────────────────┐
 │        GOVERNANCE LAYER                 │
 │  Role-based access, column masking,     │
 │  row-level security                     │
 └─────────────────────────────────────────┘
-        │
-        ▼
+                 │
+                 ▼
 ┌─────────────────────────────────────────┐
 │           ANALYTICS LAYER               │
 │  Snowpark Python scoring & anomaly      │
