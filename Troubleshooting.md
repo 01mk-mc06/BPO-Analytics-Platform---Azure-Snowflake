@@ -31,7 +31,7 @@ The Azure Blob URL format is strict:
 ```
 azure://<storage_account_name>.blob.core.windows.net/<container_name>/
 ```
-- Storage account = `bposnowflake`
+- Storage account = `<your_storage_account>`
 - Container = `raw` (found by clicking the container in Azure Portal and reading the URL)
 - Resource group = `bpo-snowflake` — this is NOT part of the URL
 
@@ -363,7 +363,7 @@ Azure Portal → Storage Account → Containers → click container → copy bro
 **Fix:**
 ```sql
 create or replace stage bpo_db.bronze.bpo_azure_stage
-  url = 'azure://bposnowflake.blob.core.windows.net/raw/'
+  url = 'azure://<your_storage_account>.blob.core.windows.net/<your_container>/'
   storage_integration = bpo_azure_integration
   file_format = bpo_db.bronze.csv_format;
 
