@@ -3,82 +3,76 @@ use schema bpo_db.bronze;
 use warehouse bpo_ingestion_wh;
 
 -- check the azure stage
-list @bpo_azure_stage
---
+list @bpo_azure_stage;
 
+--
 create or replace pipe bpo_db.bronze.pipe_agents
     auto_ingest = true
     integration = bpo_azure_notification_int
-    as
-    copy into bpo_db.bronze.raw_agents (agent_id, name, team, site, tenure_years, hire_date, email, status, source_file)
-    from (
+as
+copy into bpo_db.bronze.raw_agents (agent_id, name, team, site, tenure_years, hire_date, email, status, source_file)
+from (
     select $1, $2, $3, $4, $5, $6, $7, $8,
-    metadata$filename
+        metadata$filename
     from @bpo_azure_stage/agents.csv
-    )
-    file_format = csv_format;
+)
+file_format = csv_format;
 
-select * from bpo_db.bronze.raw_agents
+select * from bpo_db.bronze.raw_agents;
 
-
--- drop pipe bronze.pipe_tickets
+-- drop pipe bronze.pipe_tickets;
 -- ticket pipe
-CREATE OR REPLACE PIPE bpo_db.bronze.pipe_tickets
-    AUTO_INGEST = TRUE
-    INTEGRATION = bpo_azure_notification_int
-    AS
-    COPY INTO bpo_db.bronze.raw_tickets (ticket_id, agent_id, ticket_type, priority, status, resolution_time_mins, created_date, category, source_file)
-    FROM (
-    SELECT
-    $1, $2, $3, $4, $5, $6, $7, $8,
-    METADATA$FILENAME
-    FROM @bpo_azure_stage/tickets.csv
-    )
-    FILE_FORMAT = csv_format;
+create or replace pipe bpo_db.bronze.pipe_tickets
+    auto_ingest = true
+    integration = bpo_azure_notification_int
+as
+copy into bpo_db.bronze.raw_tickets (ticket_id, agent_id, ticket_type, priority, status, resolution_time_mins, created_date, category, source_file)
+from (
+    select $1, $2, $3, $4, $5, $6, $7, $8,
+        metadata$filename
+    from @bpo_azure_stage/tickets.csv
+)
+file_format = csv_format;
 
-select * from bpo_db.bronze.raw_tickets
-
+select * from bpo_db.bronze.raw_tickets;
 
 -- agent_performance pipe
-CREATE OR REPLACE PIPE bpo_db.bronze.pipe_performance
-    AUTO_INGEST = TRUE
-    INTEGRATION = bpo_azure_notification_int
-    AS
-    COPY INTO bpo_db.bronze.raw_performance (perf_id, agent_id, date, aht_mins, accuracy_pct, tickets_handled, quality_score, source_file)
-    FROM (
-    SELECT
-    $1, $2, $3, $4, $5, $6, $7,
-    METADATA$FILENAME
-    FROM @bpo_azure_stage/agent_performance.csv
-    )
-    FILE_FORMAT = csv_format;
+create or replace pipe bpo_db.bronze.pipe_performance
+    auto_ingest = true
+    integration = bpo_azure_notification_int
+as
+copy into bpo_db.bronze.raw_performance (perf_id, agent_id, date, aht_mins, accuracy_pct, tickets_handled, quality_score, source_file)
+from (
+    select $1, $2, $3, $4, $5, $6, $7,
+        metadata$filename
+    from @bpo_azure_stage/agent_performance.csv
+)
+file_format = csv_format;
 
-select * from bpo_db.bronze.raw_performance
-    
+select * from bpo_db.bronze.raw_performance;
+
 -- queue logs pipe
-CREATE OR REPLACE PIPE bpo_db.bronze.pipe_queue_logs
-    AUTO_INGEST = TRUE
-    INTEGRATION = bpo_azure_notification_int
-    AS
-    COPY INTO bpo_db.bronze.raw_queue_logs (raw_data, source_file)
-    FROM (
-    SELECT
-    $1,
-    METADATA$FILENAME
-    FROM @bpo_azure_stage/queue_logs.json
-    )
-    FILE_FORMAT = json_format;
+create or replace pipe bpo_db.bronze.pipe_queue_logs
+    auto_ingest = true
+    integration = bpo_azure_notification_int
+as
+copy into bpo_db.bronze.raw_queue_logs (raw_data, source_file)
+from (
+    select $1,
+        metadata$filename
+    from @bpo_azure_stage/queue_logs.json
+)
+file_format = json_format;
 
-select * from bpo_db.bronze.raw_queue_logs
-    
+select * from bpo_db.bronze.raw_queue_logs;
+
 -- pipe verification
--- Check all pipes are running
-SHOW PIPES IN SCHEMA bpo_db.bronze;
-
-SELECT SYSTEM$PIPE_STATUS('bpo_db.bronze.pipe_agents');
-SELECT SYSTEM$PIPE_STATUS('bpo_db.bronze.pipe_tickets');
-SELECT SYSTEM$PIPE_STATUS('bpo_db.bronze.pipe_performance');
-SELECT SYSTEM$PIPE_STATUS('bpo_db.bronze.pipe_queue_logs');
+-- check all pipes are running
+show pipes in schema bpo_db.bronze;
+select system$pipe_status('bpo_db.bronze.pipe_agents');
+select system$pipe_status('bpo_db.bronze.pipe_tickets');
+select system$pipe_status('bpo_db.bronze.pipe_performance');
+select system$pipe_status('bpo_db.bronze.pipe_queue_logs');
 
 -- pipe troubleshooting
 /*
@@ -89,14 +83,13 @@ drop pipe pipe_queue_logs;
 */
 
 -- load the data into the table (force refresh)
-ALTER PIPE bronze.pipe_agents REFRESH;
-ALTER PIPE bronze.pipe_tickets REFRESH;
-ALTER PIPE bronze.pipe_performance REFRESH;
-ALTER PIPE bronze.pipe_queue_logs REFRESH;
+alter pipe bronze.pipe_agents refresh;
+alter pipe bronze.pipe_tickets refresh;
+alter pipe bronze.pipe_performance refresh;
+alter pipe bronze.pipe_queue_logs refresh;
 
 -- verification
-SELECT * FROM bronze.raw_agents;
-SELECT * FROM bronze.raw_tickets;
-SELECT * FROM bronze.raw_performance;
-SELECT * FROM bronze.raw_queue_logs;
-
+select * from bronze.raw_agents;
+select * from bronze.raw_tickets;
+select * from bronze.raw_performance;
+select * from bronze.raw_queue_logs;
