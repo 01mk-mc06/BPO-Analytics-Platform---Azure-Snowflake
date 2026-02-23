@@ -1,5 +1,4 @@
 # BPO Analytics Platform
-## [*SQL and Python code to follow*]
 ### End-to-End Data Pipeline | Azure + Snowflake | Medallion Architecture
 
 ---
@@ -14,47 +13,44 @@ This project was designed to mirror real enterprise patterns used in large-scale
 
 ## Architecture
 
-
 ```
-
 Azure Blob Storage (raw files)
-                 │
-                 ▼
+        │
+        ▼
 ┌─────────────────────────────────────────┐
 │           BRONZE LAYER                  │
 │  Raw ingestion via Snowpipe + Event Grid│
 │  Self-healing quarantine system         │
 └─────────────────────────────────────────┘
-                 │
-                 ▼
+        │
+        ▼
 ┌─────────────────────────────────────────┐
 │           SILVER LAYER                  │
 │  Incremental processing via Streams     │
 │  Validation, standardization, flagging  │
 └─────────────────────────────────────────┘
-                 │
-                 ▼
+        │
+        ▼
 ┌─────────────────────────────────────────┐
 │           GOLD LAYER                    │
 │  Auto-refreshing KPIs via Dynamic Tables│
 │  Agent scorecards, team performance,    │
 │  ticket analytics, queue health         │
 └─────────────────────────────────────────┘
-                 │
-                 ▼
+        │
+        ▼
 ┌─────────────────────────────────────────┐
 │        GOVERNANCE LAYER                 │
 │  Role-based access, column masking,     │
 │  row-level security                     │
 └─────────────────────────────────────────┘
-                 │
-                 ▼
+        │
+        ▼
 ┌─────────────────────────────────────────┐
 │           ANALYTICS LAYER               │
 │  Snowpark Python scoring & anomaly      │
-│  detection + Power BI dashboard         │
+│  detection + Looker Studio dashboard    │
 └─────────────────────────────────────────┘
-
 ```
 
 ---
@@ -71,7 +67,7 @@ Azure Blob Storage (raw files)
 | Transformation | Snowflake Dynamic Tables |
 | Python Processing | Snowpark Python |
 | Governance | Snowflake RBAC, Masking Policies, Row Access Policies |
-| Visualization | Power BI |
+| Visualization | Looker Studio |
 | Architecture Pattern | Medallion (Bronze / Silver / Gold) |
 
 ---
@@ -113,7 +109,7 @@ Azure Blob Storage (raw files)
 ### 1. Automated Ingestion via Snowpipe
 Files uploaded to Azure Blob Storage trigger an Event Grid notification, which is delivered to an Azure Storage Queue. Snowpipe consumes the queue and automatically runs COPY INTO — no manual intervention required. Data lands in Bronze within seconds of upload.
 
-### 2. Self-Healing Bronze Layer 
+### 2. Self-Healing Bronze Layer
 Every record is evaluated on ingestion. Valid records are promoted to Silver. Invalid records — null IDs, negative values, out-of-range metrics — are quarantined with a human-readable error reason and a retry counter. A scheduled retry task attempts reprocessing every 30 minutes. After 3 failed retries, records are marked as permanently failed. Nothing is deleted.
 
 ### 3. Incremental Processing with Streams and Tasks
@@ -143,7 +139,7 @@ Four roles are implemented with explicit privilege separation: bpo_admin, bpo_an
    b. Invalid rows → Quarantine (with error reason)
 7. Dynamic Tables auto-refresh Gold KPIs every 2-5 minutes
 8. Snowpark scores agents and detects anomalies
-9. Power BI reads Gold views for dashboards
+9. Looker Studio reads Gold views for dashboards
 ```
 
 ---
@@ -159,7 +155,7 @@ Four roles are implemented with explicit privilege separation: bpo_admin, bpo_an
 
 ---
 
-## Dashboard (Power BI)
+## Dashboard (Looker Studio)
 
 Six reporting pages connected to Snowflake Gold views:
 
@@ -228,3 +224,12 @@ bpo_db/
     └── performance_anomalies
 ```
 
+---
+
+## Author
+
+**King Calma**
+
+## License
+
+MIT License — feel free to use this as a reference for your own data engineering projects.
