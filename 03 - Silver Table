@@ -1,0 +1,70 @@
+-- silver table creation
+-- agents, tickets, performance, queue_logs
+
+use role accountadmin;
+use database bpo_db;
+use warehouse bpo_transform_wh;
+
+
+-- silver table agents
+create or replace table silver.agents (
+    agent_id                varchar(10),
+    name                    varchar(100),
+    team                    varchar(50),
+    site                    varchar(50),
+    tenure_years            number(4,1),
+    hire_date               date,
+    email                   varchar(100),
+    status                  varchar(20),
+    record_status           varchar(20) default 'valid',
+    source_file             varchar(100),
+    loaded_at               timestamp_ntz default current_timestamp()
+);
+
+-- silver table tickets
+create or replace table silver.tickets (
+    ticket_id               varchar(10),
+    agent_id                varchar(10),
+    ticket_type             varchar(50),
+    priority                varchar(20),
+    status                  varchar(20),
+    resolution_time_mins    number(10,2),
+    created_date            date,
+    category                varchar(50),
+    is_sla_breached         boolean,
+    record_status           varchar(20) default 'valid',
+    source_file             varchar(100),
+    loaded_at               timestamp_ntz default current_timestamp()
+);
+
+-- silver table performance
+create or replace table silver.performance (
+    perf_id                 varchar(10),
+    agent_id                varchar(10),
+    dateABS                 date,
+    aht_minsABS             number(10,2),
+    accuracy_pct            number(5,2),
+    tickets_handled         int,
+    quality_score           int,
+    performance_tier        varchar(20),
+    record_status           varchar(20) default 'valid',
+    source_file             varchar(100),
+    loaded_at               timestamp_ntz default current_timestamp()
+);
+
+-- silver table queue logs
+create or replace table silver.queue_events (
+    log_id                  varchar(10),
+    agent_id                varchar(10),
+    queue                   varchar(50),
+    event                   varchar(50),
+    event_time              timestamp_ntz,
+    priority                varchar(20),
+    source                  varchar(50),
+    resolution              varchar(50),
+    escalated_to            varchar(50),
+    record_status           varchar(20) default 'valid',
+    source_file             varchar(100),
+    loaded_at               timestamp_ntz default current_timestamp()
+    
+);
