@@ -1,0 +1,109 @@
+-- data ready for power bi viewing
+use role accountadmin;
+use database bpo_db;
+use schema gold;
+use warehouse bpo_transform_wh;
+
+-- agent scorecard view
+create or replace view gold.vw_agent_scorecard as
+select
+  agent_id,
+  name                          as agent_name,
+  team,
+  site,
+  tenure_years,
+  status,
+  total_tickets,
+  avg_daily_tickets,
+  round(avg_aht, 2)          as avg_aht_mins,
+  round(avg_accuracy, 2)        as avg_accuracy_pct,
+  round(avg_quality_score, 2)   as avg_quality_score,
+  performance_tier,
+  composite_score,
+  last_active_date
+from bpo_db.gold.agent_scorecard;
+
+-- team performance view
+create or replace view gold.vw_team_performance as
+select
+  team,
+  site,
+  total_agents,
+  total_tickets,
+  round(avg_aht, 2)      as avg_aht_mins,
+  round(avg_accuracy, 2) as avg_accuracy_pct,
+  round(avg_quality, 2)  as avg_quality_score,
+  min_quality,
+  max_quality,
+  team_tier
+from bpo_db.gold.team_performance;
+
+-- ticket summary view
+create or replace view gold.vw_ticket_summary as
+select
+  created_date,
+  ticket_type,
+  priority,
+  category,
+  total_tickets,
+  closed_tickets,
+  open_tickets,
+  resolution_rate_pct,
+  sla_breaches,
+  sla_breach_rate_pct,
+  round(avg_resolution_time, 2) as avg_resolution_mins,
+  max_resolution_time
+from bpo_db.gold.ticket_summary;
+
+-- daily ops view
+-- for checking
+select * from bpo_db.gold.daily_ops_report
+create or replace view gold.vw_daily_ops as
+select
+  dateabs,
+  site,
+  team,
+  agents_active,
+  total_tickets_handled,
+  round(avg_aht, 2)       as avg_aht_mins,
+  round(avg_accuracy, 2)  as avg_accuracy_pct,
+  round(avg_quality, 2)   as avg_quality_score,
+  sla_breached,
+  round(quality_trend, 2) as quality_trend
+from bpo_db.gold.daily_ops_report;
+
+-- queue health view
+create or replace view gold.vw_queue_health as
+select
+  queue,
+  event_date,
+  total_events,
+  tickets_opened,
+  tickets_closed,
+  escalations,
+  backlog,
+  escalation_rate_pct,
+  agents_handling
+from bpo_db.gold.queue_health;
+
+-- quarantine summary view
+create or replace view bronze.vw_quarantine_summary as
+select
+  source_table,
+  error_reason,
+  status,
+  count(*)            as record_count,
+  min(quarantined_at) as first_seen,
+  max(quarantined_at) as last_seen
+from bpo_db.bronze.quarantine_records
+group by source_table, error_reason, status;
+
+-- ml scores view -- from snowpark
+create or replace view gold.vw_agent_ml_scores as
+select * from bpo_db.gold.agent_ml_scores;
+
+-- cohort analysis view -- from snowpark
+create or replace view gold.vw_tenure_cohort as
+select * from bpo_db.gold.tenure_cohort_analysis;
+
+
