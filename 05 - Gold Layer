@@ -1,0 +1,211 @@
+use role accountadmin;
+use database bpo_db
+use warehouse bpo_transform_wh
+
+-- checking the silver tables
+select * from bpo_db.silver.performance
+select * from bpo_db.silver.agents
+select * from bpo_db.silver.tickets
+
+create or replace dynamic table bpo_db.gold.agent_scorecard
+    target_lag = '2 minutes'
+    warehouse = bpo_transform_wh
+as
+select 
+    p.agent_id,
+    a.name,
+    a.team,
+    a.site,
+    a.tenure_years,
+    a.status,
+    -- KPI volume metrics
+    sum(p.tickets_handled)          as total_tickets,
+    avg(p.tickets_handled)          as avg_daily_tickets,
+    -- quality scoring
+    -- efficiency metrics
+    avg(p.aht_minsabs)                as avg_aht,
+    -- effectiveness metrics
+    avg(p.accuracy_pct)             as avg_accuracy,
+    avg(p.quality_score)            as avg_quality_score,
+    -- performance tier
+    case
+        when avg(p.quality_score) >= 90 then 'Top Performer'
+        when avg(p.quality_score) >= 80 then 'Mid Performer'
+        else 'Needs improvement'
+    end                             as performance_tier,
+    round(
+    (avg(p.quality_score)*0.4) +
+    (avg(p.quality_score)*0.4) +
+    (least(avg(p.tickets_handled) / 50 * 100, 100) * 0.2)
+    ,2)                             as composite_score,
+    max(p.dateabs)                  as last_active_date,
+    current_timestamp()             as refreshed_at
+    -- source and joining
+    from bpo_db.silver.performance p
+    join bpo_db.silver.agents a 
+    on p.agent_id = a.agent_id
+    where p.record_status = 'VALID' -- fix this upper and lower case
+        and a.record_status = 'valid'
+    group by -- 1,2,3,4,5,6
+    p.agent_id, a.name, a.team, a.site, a.tenure_years, a.status;
+
+-- for checking
+select * from bpo_db.gold.agent_scorecard
+
+-- team performance gold table
+create or replace dynamic table bpo_db.gold.daily_ops_report
+    target_lag = '2 minutes'
+    warehouse = bpo_transform_wh
+as 
+select
+    p.dateabs,
+    a.site,
+    a.team,
+    -- KPI efficiency volume
+    count(distinct(p.agent_id))     as agents_active,
+    sum(p.tickets_handled)          as total_tickets_handled,
+    -- quality KPI
+    avg(aht_minsabs)                as avg_aht,
+    avg(accuracy_pct)               as avg_accuracy,
+    avg(p.quality_score)            as avg_quality,
+    -- SLA from tickets
+    count(case
+        when t.is_sla_breached = True then 1
+        end
+        )                           as sla_breached,
+    -- trend vs previous day; LAG function
+    avg(p.quality_score) - lag(avg(p.quality_score)) over (
+        partition by a.site, a.team
+        order by p.dateabs
+    )                               as quality_trend,
+    current_timestamp()             as refreshed_at
+    -- source table and joining
+    from bpo_db.silver.performance p
+    join bpo_db.silver.agents a on p.agent_id = a.agent_id
+    left join bpo_db.silver.tickets t on t.agent_id = p.agent_id
+        and t.created_date = p.dateabs
+    where p.record_status = 'VALID' 
+        and a.record_status = 'valid'
+    group by 1,2,3
+
+select * from bpo_db.gold.daily_ops_report
+    
+
+-- check first the queue events table (silver)
+select * from bpo_db.silver.queue_events
+
+-- queue health
+create or replace dynamic table bpo_db.gold.queue_health
+    target_lag = '2 minutes'
+    warehouse = bpo_transform_wh
+as 
+select
+    queue,
+    date(event_time)                as event_date,
+    count(*)                        as total_events, 
+    count(case when event = 'ticket_opened' then 1 end) as tickets_opened,
+    count(case when event = 'ticket_closed' then 1 end) as tickets_closed,
+    count(case when event = 'escalated'     then 1 end) as escalations,
+        
+    -- Backlog = opened - closed
+    count(case when event = 'ticket_opened' then 1 end) -
+    count(case when event = 'ticket_closed' then 1 end) as backlog,
+        
+          -- Escalation rate
+    round(
+    count(case when event = 'escalated' then 1 end) /
+    nullif(count(case when event = 'ticket_opened' then 1 end), 0) * 100
+    , 2)                                    as escalation_rate_pct,
+        
+    count(distinct agent_id)                as agents_handling,
+    current_timestamp()                     as refreshed_at
+    from bpo_db.silver.queue_events
+    where record_status = 'VALID'
+    group by queue, DATE(event_time);
+
+-- check queue health table
+select * from bpo_db.gold.queue_health;
+
+
+
+-- team performance
+-- checking the needed tables
+select * from bpo_db.silver.performance
+select * from bpo_db.silver.agents
+
+CREATE OR REPLACE DYNAMIC TABLE bpo_db.gold.team_performance
+  TARGET_LAG = '2 minutes'
+  WAREHOUSE = bpo_transform_wh
+AS
+SELECT
+  a.team,
+  a.site,
+  COUNT(DISTINCT p.agent_id)              AS total_agents,
+  SUM(p.tickets_handled)                  AS total_tickets,
+  AVG(p.aht_minsabs)                      AS avg_aht,
+  AVG(p.accuracy_pct)                     AS avg_accuracy,
+  AVG(p.quality_score)                    AS avg_quality,
+  MIN(p.quality_score)                    AS min_quality,
+  MAX(p.quality_score)                    AS max_quality,
+
+  -- Team performance tier
+  CASE
+    WHEN AVG(p.quality_score) >= 90 THEN 'High Performing'
+    WHEN AVG(p.quality_score) >= 80 THEN 'On Track'
+    ELSE 'Needs Attention'
+  END                                     AS team_tier,
+
+  CURRENT_TIMESTAMP()                     AS refreshed_at
+
+FROM bpo_db.silver.performance p
+JOIN bpo_db.silver.agents a ON p.agent_id = a.agent_id
+WHERE p.record_status = 'VALID'
+  AND a.record_status = 'valid'
+GROUP BY a.team, a.site;
+
+select * from gold.team_performance
+
+
+
+
+-- ticket summary
+-- checking the needed tables
+select * from bpo_db.silver.tickets
+
+CREATE OR REPLACE DYNAMIC TABLE bpo_db.gold.ticket_summary
+  TARGET_LAG = '2 minutes'
+  WAREHOUSE = bpo_transform_wh
+AS
+SELECT
+  created_date,
+  ticket_type,
+  priority,
+  category,
+
+  COUNT(*)                                AS total_tickets,
+  COUNT(CASE WHEN status = 'Closed' THEN 1 END) AS closed_tickets,
+  COUNT(CASE WHEN status = 'Open'   THEN 1 END) AS open_tickets,
+
+  -- Resolution rate
+  ROUND(
+    COUNT(CASE WHEN status = 'Closed' THEN 1 END) /
+    NULLIF(COUNT(*), 0) * 100
+  , 2)                                    AS resolution_rate_pct,
+
+  -- SLA metrics
+  COUNT(CASE WHEN is_sla_breached = TRUE THEN 1 END) AS sla_breaches,
+  ROUND(
+    COUNT(CASE WHEN is_sla_breached = TRUE THEN 1 END) /
+    NULLIF(COUNT(*), 0) * 100
+  , 2)                                    AS sla_breach_rate_pct,
+
+  AVG(resolution_time_mins)               AS avg_resolution_time,
+  MAX(resolution_time_mins)               AS max_resolution_time,
+
+  CURRENT_TIMESTAMP()                     AS refreshed_at
+
+FROM bpo_db.silver.tickets
+WHERE record_status = 'VALID'
+GROUP BY created_date, ticket_type, priority, category;
+
+select * from bpo_db.gold.ticket_summary
