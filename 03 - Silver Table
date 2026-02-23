@@ -41,8 +41,8 @@ create or replace table silver.tickets (
 create or replace table silver.performance (
     perf_id                 varchar(10),
     agent_id                varchar(10),
-    dateABS                 date,
-    aht_minsABS             number(10,2),
+    date                    date,
+    aht_mins                number(10,2),
     accuracy_pct            number(5,2),
     tickets_handled         int,
     quality_score           int,
