@@ -1,1 +1,254 @@
-[To follow]
+[CLEANED]
+from snowflake.snowpark import Session
+from snowflake.snowpark.window import Window
+from snowflake.snowpark.functions import (
+    col, avg, sum as sum_, count, round as round_,
+    when, lit, lag, lead, rank, dense_rank, row_number,
+    datediff, dateadd, trim, upper, lower, initcap,
+    concat, coalesce, nullif, iff, least, greatest,
+    min as min_, max as max_, stddev, variance
+)
+import pandas as pd
+import numpy as np
+
+
+# -----------------------------------------------------------------------------
+# snowflake connection
+# -----------------------------------------------------------------------------
+connection_params = {
+    "account":   "**************",
+    "user":      "**************",
+    "password":  "**************",
+    "role":      "**************",
+    "warehouse": "BPO_TRANSFORM_WH",
+    "database":  "BPO_DB",
+    "schema":    "SILVER"
+}
+
+session = Session.builder.configs(connection_params).create()
+print("=" * 60)
+print("connected to snowflake")
+print(session.sql("select current_user(), current_role(), current_warehouse()").collect())
+print("=" * 60)
+
+
+# =============================================================================
+# part 1: agent performance scoring model
+# reads from silver.performance and silver.agents
+# outputs to gold.agent_ml_scores
+# =============================================================================
+
+print("\n[part 1] agent performance scoring model")
+print("-" * 60)
+
+# load silver tables
+df_performance = session.table("BPO_DB.SILVER.PERFORMANCE")
+df_agents      = session.table("BPO_DB.SILVER.AGENTS")
+
+print("silver.performance row count:", df_performance.count())
+print("silver.agents row count     :", df_agents.count())
+
+# rename agent_id in agents to avoid ambiguous join column
+df_agents_renamed = df_agents.rename(df_agents["AGENT_ID"], "AGENT_ID_B")
+
+# join performance with agents on agent_id
+df_joined = df_performance.join(
+    df_agents_renamed,
+    df_performance["AGENT_ID"] == df_agents_renamed["AGENT_ID_B"]
+)
+
+print("\ncolumns after join:")
+print(df_joined.columns)
+
+# aggregate per agent — compute kpi averages and volume
+df_grouped = df_joined.group_by(
+    df_performance["AGENT_ID"],
+    df_joined["NAME"],
+    df_joined["TEAM"],
+    df_joined["SITE"],
+    df_joined["TENURE_YEARS"]
+).agg(
+    avg(df_joined["AHT_MINSABS"]).alias("AVG_AHT"),
+    avg(df_joined["ACCURACY_PCT"]).alias("AVG_ACCURACY"),
+    avg(df_joined["QUALITY_SCORE"]).alias("AVG_QUALITY"),
+    sum_(df_joined["TICKETS_HANDLED"]).alias("TOTAL_TICKETS"),
+    count(df_performance["AGENT_ID"]).alias("DAYS_ACTIVE")
+)
+
+print("\naggregated agent metrics (sample):")
+df_grouped.show(5)
+
+# weighted score formula:
+#   accuracy  = 40%
+#   quality   = 40%
+#   volume    = 20% (capped at 500 tickets = 100%)
+# score tier: elite >= 90, proficient >= 80, developing >= 70, needs support < 70
+
+def weighted_score():
+    return round_(
+        (col("AVG_ACCURACY") * 0.40) +
+        (col("AVG_QUALITY")  * 0.40) +
+        (col("TOTAL_TICKETS") / lit(500) * 100 * 0.20)
+    , 2)
+
+df_scored = df_grouped.select(
+    col("AGENT_ID"),
+    col("NAME"),
+    col("TEAM"),
+    col("SITE"),
+    col("TENURE_YEARS"),
+    col("AVG_AHT"),
+    col("AVG_ACCURACY"),
+    col("AVG_QUALITY"),
+    col("TOTAL_TICKETS"),
+    col("DAYS_ACTIVE"),
+    weighted_score().alias("WEIGHTED_SCORE"),
+    when(weighted_score() >= 90, lit("Elite"))
+    .when(weighted_score() >= 80, lit("Proficient"))
+    .when(weighted_score() >= 70, lit("Developing"))
+    .otherwise(lit("Needs Support")).alias("SCORE_TIER")
+)
+
+print("\nagent scored results (sample):")
+df_scored.show(5)
+
+# write to gold layer
+df_scored.write.mode("overwrite").save_as_table("BPO_DB.GOLD.AGENT_ML_SCORES")
+print("\n[ok] written to BPO_DB.GOLD.AGENT_ML_SCORES")
+
+# data check
+gold_ml_count = session.table("BPO_DB.GOLD.AGENT_ML_SCORES").count()
+print(f"[check] gold.agent_ml_scores row count: {gold_ml_count}")
+session.table("BPO_DB.GOLD.AGENT_ML_SCORES").show(5)
+
+
+# =============================================================================
+# part 2: anomaly detection — quality score drops
+# reads from silver.performance
+# flags agents with sudden quality score drops
+# outputs to audit.performance_anomalies
+# =============================================================================
+
+print("\n[part 2] anomaly detection — quality score drops")
+print("-" * 60)
+
+df_daily = session.table("BPO_DB.SILVER.PERFORMANCE")
+
+# window: per agent ordered by date to compute lag (previous day quality)
+window_spec = Window.partition_by("AGENT_ID").order_by("DATEABS")
+
+# step 1: compute quality drop vs previous day for all agents (no filter)
+# used to inspect actual drop distribution before applying threshold
+df_quality_check = df_daily \
+    .with_column("PREV_QUALITY", lag("QUALITY_SCORE", 1).over(window_spec)) \
+    .with_column("QUALITY_DROP", col("QUALITY_SCORE") - col("PREV_QUALITY")) \
+    .select(
+        "AGENT_ID",
+        "DATEABS",
+        "QUALITY_SCORE",
+        "PREV_QUALITY",
+        "QUALITY_DROP"
+    )
+
+print("quality drop distribution (all agents, no filter):")
+df_quality_check.show(20)
+
+# step 2: apply anomaly threshold — flag drops greater than 5 points
+# note: threshold set to -5 instead of -10 due to small sample dataset
+df_anomaly = df_daily \
+    .with_column("PREV_QUALITY", lag("QUALITY_SCORE", 1).over(window_spec)) \
+    .with_column("QUALITY_DROP", col("QUALITY_SCORE") - col("PREV_QUALITY")) \
+    .filter(col("QUALITY_DROP") < -5) \
+    .select(
+        "AGENT_ID",
+        "DATEABS",
+        "QUALITY_SCORE",
+        "PREV_QUALITY",
+        "QUALITY_DROP"
+    ) \
+    .with_column("ALERT", lit("PERFORMANCE_DROP_DETECTED"))
+
+print("\nanomalies detected:")
+df_anomaly.show()
+
+# write to audit layer
+df_anomaly.write.mode("overwrite").save_as_table("BPO_DB.AUDIT.PERFORMANCE_ANOMALIES")
+print("\n[ok] written to BPO_DB.AUDIT.PERFORMANCE_ANOMALIES")
+
+# data check
+audit_count = session.table("BPO_DB.AUDIT.PERFORMANCE_ANOMALIES").count()
+print(f"[check] audit.performance_anomalies row count: {audit_count}")
+session.table("BPO_DB.AUDIT.PERFORMANCE_ANOMALIES").show(5)
+
+
+# =============================================================================
+# part 3: cohort analysis — performance by tenure group
+# reads from gold.agent_ml_scores joined with silver.agents
+# groups agents into junior / mid / senior cohorts
+# outputs to gold.tenure_cohort_analysis
+# =============================================================================
+
+print("\n[part 3] cohort analysis — performance by tenure group")
+print("-" * 60)
+
+# reload agents and rename to avoid ambiguous join
+df_agents        = session.table("BPO_DB.SILVER.AGENTS")
+df_agents_renamed = df_agents.rename(df_agents["AGENT_ID"], "AGENT_ID_B")
+
+print("silver.agents row count:", df_agents.count())
+
+# join scored df with agents to get tenure_years
+# note: df_scored has agent_id as 'l_0006_AGENT_ID' due to snowpark internal naming after join
+df_cohort_joined = df_scored.join(
+    df_agents_renamed,
+    df_scored['"l_0006_AGENT_ID"'] == df_agents_renamed["AGENT_ID_B"]
+)
+
+print("\ncolumns after cohort join:")
+print(df_cohort_joined.columns)
+
+# classify agents into tenure cohorts and compute group averages
+df_cohort = df_cohort_joined \
+    .with_column(
+        "TENURE_COHORT",
+        when(col("TENURE_YEARS") >= 4, lit("Senior (4+ yrs)"))
+        .when(col("TENURE_YEARS") >= 2, lit("Mid (2-4 yrs)"))
+        .otherwise(lit("Junior (0-2 yrs)"))
+    ) \
+    .group_by("TENURE_COHORT") \
+    .agg(
+        count(col('"l_0006_AGENT_ID"')).alias("AGENT_COUNT"),
+        avg("AVG_ACCURACY").alias("AVG_ACCURACY"),
+        avg("AVG_QUALITY").alias("AVG_QUALITY"),
+        avg("WEIGHTED_SCORE").alias("AVG_SCORE")
+    ) \
+    .sort("AVG_SCORE", ascending=False)
+
+print("\ncohort analysis results:")
+df_cohort.show()
+
+# write to gold layer
+df_cohort.write.mode("overwrite").save_as_table("BPO_DB.GOLD.TENURE_COHORT_ANALYSIS")
+print("\n[ok] written to BPO_DB.GOLD.TENURE_COHORT_ANALYSIS")
+
+# data check
+cohort_count = session.table("BPO_DB.GOLD.TENURE_COHORT_ANALYSIS").count()
+print(f"[check] gold.tenure_cohort_analysis row count: {cohort_count}")
+session.table("BPO_DB.GOLD.TENURE_COHORT_ANALYSIS").show()
+
+
+# =============================================================================
+# final summary
+# =============================================================================
+
+print("\n" + "=" * 60)
+print("snowpark pipeline complete — gold layer row counts")
+print("=" * 60)
+print(f"  gold.agent_ml_scores        : {session.table('BPO_DB.GOLD.AGENT_ML_SCORES').count()} rows")
+print(f"  gold.tenure_cohort_analysis : {session.table('BPO_DB.GOLD.TENURE_COHORT_ANALYSIS').count()} rows")
+print(f"  audit.performance_anomalies : {session.table('BPO_DB.AUDIT.PERFORMANCE_ANOMALIES').count()} rows")
+print("=" * 60)
+
+# close session
+session.close()
+print("\nsession closed.")
