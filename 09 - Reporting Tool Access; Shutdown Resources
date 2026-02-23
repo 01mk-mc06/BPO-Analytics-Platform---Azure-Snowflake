@@ -1,0 +1,31 @@
+-- Power BI access
+use role accountadmin;
+
+create user if not exists powerbi_user
+  password          = '123456'
+  default_role      = bpo_analyst
+  default_warehouse = bpo_transform_wh
+  default_namespace = bpo_db.gold;
+
+grant role bpo_analyst to user powerbi_user;
+grant select on all views in schema bpo_db.gold   to role bpo_analyst;
+grant select on all views in schema bpo_db.bronze to role bpo_analyst;
+
+show grants to user powerbi_user;
+
+-- turn off everything
+-- suspend tasks
+alter task bpo_db.bronze.task_silver_agents      suspend;
+alter task bpo_db.bronze.task_silver_tickets     suspend;
+alter task bpo_db.bronze.task_silver_performance suspend;
+alter task bpo_db.bronze.task_silver_queue_logs  suspend;
+
+-- pause pipes
+alter pipe bpo_db.bronze.pipe_agents      pause;
+alter pipe bpo_db.bronze.pipe_tickets     pause;
+alter pipe bpo_db.bronze.pipe_performance pause;
+alter pipe bpo_db.bronze.pipe_queue_logs  pause;
+
+-- suspend warehouses
+alter warehouse bpo_ingestion_wh suspend;
+alter warehouse bpo_transform_wh suspend;
