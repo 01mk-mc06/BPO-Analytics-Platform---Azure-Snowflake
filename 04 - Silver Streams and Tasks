@@ -1,0 +1,299 @@
+use role accountadmin;
+use database bpo_db;
+use warehouse bpo_transform_wh;
+
+-- creating streams from bronze to silver
+-- agents
+use schema bronze
+
+create or replace stream stream_agents on table bpo_db.bronze.raw_agents;
+
+-- tickets
+create or replace stream stream_tickets on table bpo_db.bronze.raw_tickets;
+
+-- performance
+create or replace stream stream_performance on table bpo_db.bronze.raw_performance;
+
+-- queue_logs
+create or replace stream stream_queue_logs on table bpo_db.bronze.raw_queue_logs;
+
+-- checking the created streams
+show streams
+
+SELECT SYSTEM$STREAM_HAS_DATA('bpo_db.bronze.stream_agents');
+
+select * from bpo_db.bronze.stream_agents limit 10
+
+-- for troubleshooting
+-- show task
+-- drop task task_silver_agents
+-- silver table transformations (cleaing and editing)
+create or replace task task_silver_agents
+    warehouse = bpo_transform_wh
+    schedule = '2 minute'
+    when system$stream_has_data('bpo_db.bronze.stream_agents')
+as
+begin
+-- inserting records into the silver table
+    insert into bpo_db.silver.agents
+    select
+        upper(trim(agent_id)),
+        initcap(trim(name)),
+        upper(trim(team)),
+        initcap(trim(site)),
+        tenure_years,
+        hire_date,
+        lower(trim(email)),
+        upper(trim(status)),
+        'valid',
+        source_file,
+        current_timestamp()
+    from bpo_db.bronze.stream_agents
+    where metadata$action = 'INSERT'
+        and agent_id is not null 
+        and name is not null
+        and status in ('Active','Inactive','active','inactive');
+        
+-- inserting quarantine record into the quarantine table; invalid records
+    insert into bpo_db.bronze.quarantine_records
+        (source_table, raw_data, error_reason, retry_count, status, quarantined_at)
+    select 
+        'raw_agents',
+        to_variant(object_construct(
+        'agent_id', agent_id,
+        'name', name,
+        'team', team,
+        'status', status
+        )),
+        case
+            when agent_id is null then 'NULL agent_id'
+            when name is null then 'NULL name'
+            else 'invalid status value'
+        end,
+        0,
+        'pending',
+        current_timestamp()
+    from bpo_db.bronze.stream_agents
+    where metadata$action = 'INSERT'
+        and (
+            agent_is is null
+            or name is null
+            or status not in ('Active','Inactive','active','inactive')
+        );
+end;
+
+-- tickets
+create or replace task task_silver_tickets 
+    warehouse = bpo_transform_wh
+    schedule = '1 minute'
+    when system$stream_has_data('bpo_db.bronze.stream_tickets')
+as
+begin
+    -- inserting valid rows to silver
+    insert into bpo_db.silver.tickets
+    select
+        upper(trim(ticket_id)),
+        upper(trim(agent_id)),
+        initcap(trim(ticket_type)),
+        initcap(trim(priority)),
+        initcap(trim(status)),
+        resolution_time_mins, 
+        created_date, 
+        initcap(trim(category)),
+        case
+            when priority = 'Critical' and resolution_time_mins > 30 then TRUE
+            when priority = 'High' and resolution_time_mins > 60 then TRUE
+            else false
+        end,
+        'valid',
+        source_file,
+        current_timestamp(),
+    from bpo_db.bronze.stream_tickets
+    where metadata$action = 'INSERT'
+        and ticket_id is not null
+        and agent_id is not null
+        and resolution_time_mins is not null;
+
+    --- quarantined rows
+    insert into bpo_db.bronze.quarantine_records
+        (source_table, raw_data, error_reason, retry_count, status, quarantined_at)
+       select
+        'raw_tickets',
+        to_variant(object_construct(
+            'ticket_id', ticket_id,
+            'agent_id', agent_id,
+            'resolution_time_mins', resolution_time_mins,
+            'status', status
+        )), 
+        case
+            when ticket_id is null then 'NULL ticket_id'
+            when agent_id is null then 'NULL agent_id'
+            when resolution_time < 0 then 'Negative resolution time'
+            else 'Invalid record'
+        end, 
+        0,
+        'pending',
+        current_timestamp()
+        from bpo_db.bronze.stream_tickets
+        where metadata$action = 'INSERT'
+            and (
+            ticket_id is NULL
+            or agent_id is NULL
+            or resolution_time_mins null
+            );
+end;
+
+ALTER TASK bpo_db.bronze.task_silver_tickets RESUME;
+EXECUTE TASK bpo_db.bronze.task_silver_tickets;
+
+-- checking silver tickets table
+select * from bpo_db.silver.tickets
+
+-- for troubleshooting
+-- SELECT SYSTEM$STREAM_HAS_DATA('bpo_db.bronze.stream_tickets')
+-- SELECT METADATA$ACTION, * FROM bpo_db.bronze.stream_tickets;
+
+
+-- stream performance
+CREATE OR REPLACE TASK task_silver_performance
+  WAREHOUSE = bpo_transform_wh
+  SCHEDULE = '2 MINUTE'
+  WHEN SYSTEM$STREAM_HAS_DATA('bpo_db.bronze.stream_performance')
+AS
+BEGIN
+
+  -- Step A: Insert VALID records
+  INSERT INTO bpo_db.silver.performance
+  SELECT
+    UPPER(TRIM(perf_id)),
+    UPPER(TRIM(agent_id)),
+    date,
+    aht_mins,
+    accuracy_pct,
+    tickets_handled,
+    quality_score,
+    CASE
+      WHEN quality_score >= 90 THEN 'Top'
+      WHEN quality_score >= 80 THEN 'Mid'
+      ELSE 'Low'
+    END,
+    'VALID',
+    source_file,
+    CURRENT_TIMESTAMP()
+  FROM bpo_db.bronze.stream_performance
+  WHERE METADATA$ACTION = 'INSERT'
+    AND agent_id IS NOT NULL
+    AND aht_mins IS NOT NULL
+    AND aht_mins BETWEEN 1 AND 120
+    AND accuracy_pct BETWEEN 0 AND 100;
+
+  -- Step B: Quarantine INVALID records
+  INSERT INTO bpo_db.bronze.quarantine_records
+    (source_table, raw_data, error_reason, retry_count, status, quarantined_at)
+  SELECT
+    'raw_performance',
+    TO_VARIANT(OBJECT_CONSTRUCT(
+      'perf_id', perf_id,
+      'agent_id', agent_id,
+      'aht_mins', aht_mins,
+      'accuracy_pct', accuracy_pct
+    )),
+    CASE
+      WHEN agent_id IS NULL                    THEN 'NULL agent_id'
+      WHEN aht_mins IS NULL                    THEN 'NULL aht_mins'
+      WHEN aht_mins NOT BETWEEN 1 AND 120      THEN 'AHT out of range'
+      WHEN accuracy_pct NOT BETWEEN 0 AND 100  THEN 'Accuracy out of range'
+      ELSE 'Invalid record'
+    END,
+    0,
+    'PENDING',
+    CURRENT_TIMESTAMP()
+  FROM bpo_db.bronze.stream_performance
+  WHERE METADATA$ACTION = 'INSERT'
+    AND (
+      agent_id IS NULL
+      OR aht_mins IS NULL
+      OR aht_mins NOT BETWEEN 1 AND 120
+      OR accuracy_pct NOT BETWEEN 0 AND 100
+    );
+
+END;
+
+ALTER TASK task_silver_performance RESUME;
+EXECUTE TASK bpo_db.bronze.task_silver_performance;
+
+SELECT SYSTEM$STREAM_HAS_DATA('bpo_db.bronze.stream_performance')
+SELECT METADATA$ACTION, * FROM bpo_db.bronze.stream_performance;
+-- checking the silver performance table
+select * from bpo_db.silver.performance
+
+
+
+
+-- quueue logs and JSON flattening
+CREATE OR REPLACE TASK task_silver_queue_logs
+  WAREHOUSE = bpo_transform_wh
+  SCHEDULE = '2 MINUTE'
+  WHEN SYSTEM$STREAM_HAS_DATA('bpo_db.bronze.stream_queue_logs')
+AS
+BEGIN
+
+  -- Step A: Insert VALID records (flatten JSON)
+  INSERT INTO bpo_db.silver.queue_events
+  SELECT
+    raw_data:log_id::VARCHAR,
+    raw_data:agent_id::VARCHAR,
+    raw_data:queue::VARCHAR,
+    raw_data:event::VARCHAR,
+    raw_data:timestamp::TIMESTAMP_NTZ,
+    raw_data:metadata.priority::VARCHAR,
+    raw_data:metadata.source::VARCHAR,
+    raw_data:metadata.resolution::VARCHAR,
+    raw_data:metadata.escalated_to::VARCHAR,
+    'VALID',
+    source_file,
+    CURRENT_TIMESTAMP()
+  FROM bpo_db.bronze.stream_queue_logs
+  WHERE METADATA$ACTION = 'INSERT'
+    AND raw_data:log_id::VARCHAR IS NOT NULL
+    AND raw_data:agent_id::VARCHAR IS NOT NULL
+    AND raw_data:agent_id::VARCHAR != '';
+
+  -- Step B: Quarantine INVALID records
+  INSERT INTO bpo_db.bronze.quarantine_records
+    (source_table, raw_data, error_reason, retry_count, status, quarantined_at)
+  SELECT
+    'raw_queue_logs',
+    log_data,
+    CASE
+      WHEN raw_data:log_id::VARCHAR IS NULL    THEN 'NULL log_id'
+      WHEN raw_data:agent_id::VARCHAR IS NULL  THEN 'NULL agent_id'
+      WHEN raw_data:agent_id::VARCHAR = ''     THEN 'Empty agent_id'
+      ELSE 'Invalid record'
+    END,
+    0,
+    'PENDING',
+    CURRENT_TIMESTAMP()
+  FROM bpo_db.bronze.stream_queue_logs
+  WHERE METADATA$ACTION = 'INSERT'
+    AND (
+      raw_data:log_id::VARCHAR IS NULL
+      OR raw_data:agent_id::VARCHAR IS NULL
+      OR raw_data:agent_id::VARCHAR = ''
+    );
+
+END;
+
+ALTER TASK task_silver_queue_logs RESUME;
+
+-- for checking
+EXECUTE TASK bpo_db.bronze.task_silver_queue_logs;
+
+select * from bpo_db.silver.queue_events
+
+-- checking if all silver data has data
+select * from bpo_db.silver.agents;
+select * from bpo_db.silver.tickets;
+select * from bpo_db.silver.performance;
+select * from bpo_db.silver.queue_events;
+select * from bpo_db.bronze.quarantine_records;
