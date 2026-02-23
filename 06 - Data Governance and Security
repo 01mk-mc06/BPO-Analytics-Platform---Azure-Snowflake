@@ -1,0 +1,60 @@
+-- remove policy from all tables it's applied to
+alter table bpo_db.silver.agents drop row access policy bpo_db.silver.team_access_policy;
+
+alter table bpo_db.gold.agent_scorecard drop row access policy bpo_db.silver.team_access_policy;
+
+alter table bpo_db.gold.team_performance drop row access policy bpo_db.silver.team_access_policy;
+
+-- now drop the policy itself
+drop row access policy bpo_db.silver.team_access_policy;
+
+-- drop the duplicate in public too
+drop row access policy bpo_db.public.team_access_policy;
+
+-- recreate in silver schema
+use schema bpo_db.silver;
+create or replace row access policy team_access_policy
+  as (team varchar) returns boolean ->
+    current_role() = 'ACCOUNTADMIN'
+    or exists (
+      select 1
+      from bpo_db.silver.role_access_map
+      where role_name = current_role()
+        and team = role_access_map.team
+    );
+
+-- reapply to tables
+alter table bpo_db.silver.agents add row access policy team_access_policy on (team);
+alter table bpo_db.gold.agent_scorecard add row access policy team_access_policy on (team);
+alter table bpo_db.gold.team_performance add row access policy team_access_policy on (team);
+
+-- verify data is visible
+select count(*) from bpo_db.silver.agents;
+select count(*) from bpo_db.gold.agent_scorecard;
+
+-- test accountadmin -- should see all teams
+use role accountadmin;
+select team, count(*) from bpo_db.silver.agents group by team;
+
+-- test bpo_admin -- should see all teams
+use role bpo_admin;
+use warehouse bpo_transform_wh;
+select team, count(*) from bpo_db.silver.agents group by team;
+
+-- test bpo_analyst -- should see alpha and beta only
+use role bpo_analyst;
+use warehouse bpo_transform_wh;
+select team, count(*) from bpo_db.silver.agents group by team;
+
+-- test bpo_operations -- should see all teams
+use role bpo_operations;
+use warehouse bpo_transform_wh;
+select team, count(*) from bpo_db.silver.agents group by team;
+
+-- test bpo_agent -- should see own records only
+use role bpo_agent;
+use warehouse bpo_transform_wh;
+select team, count(*) from bpo_db.gold.agent_scorecard group by team;
+
+-- 
+use role accountadmin;
