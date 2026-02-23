@@ -60,7 +60,7 @@ from bpo_db.gold.ticket_summary;
 select * from bpo_db.gold.daily_ops_report
 create or replace view gold.vw_daily_ops as
 select
-  dateabs,
+  date,
   site,
   team,
   agents_active,
