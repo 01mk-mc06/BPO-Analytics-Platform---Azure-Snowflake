@@ -1,0 +1,46 @@
+-- defining the role to used 
+use role accountadmin;
+
+-- database creation
+create or replace database bpo_db;
+
+-- schema creation
+create or replace schema bpo_db.bronze;
+create or replace schema bpo_db.silver;
+create or replace schema bpo_db.gold;
+create or replace schema bpo_db.audit;
+
+-- warehouse creation
+create or replace warehouse bpo_ingestion_wh
+    warehouse_size = 'xsmall'
+    auto_suspend = 60 -- 60 minutes
+    auto_resume = true
+    comment = 'for snowpipe ingestion';
+
+-- warehouse transformation
+create or replace warehouse bpo_transform_wh
+    warehouse_size = 'xsmall'
+    auto_suspend = 60
+    auto_resume = true
+    comment = 'for streams. task and dynamic tables';
+
+-- resource monitor (cost saving)
+create resource monitor bpo_cost_monitor
+    with credit_quota = 20
+    triggers
+        on 25 percent do notify
+        on 50 percent do notify
+        on 75 percent do notify
+        on 100 percent do suspend;
+
+-- attaching the resource monitor to our warehouse
+alter warehouse bpo_ingestion_wh set resource_monitor = bpo_cost_monitor;
+alter warehouse bpo_transform_wh set resource_monitor = bpo_cost_monitor;
+
+
+-- checking the database and the warehouse created
+show databases
+
+-- bpo_db should be available
+-- the two warehouse created should also be available
+show warehouses
