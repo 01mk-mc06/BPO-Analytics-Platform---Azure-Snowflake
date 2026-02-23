@@ -1,0 +1,151 @@
+/* Checklist
+File formats created
+> Bronze tables created
+> Quarantine table created
+> Notification integration set up
+> Snowpipes created and running
+> Event Grid subscription configured
+> Initial data loaded
+*/
+
+/*
+building the needed infrastructure and connection
+setting up azure infrastructure
+resource group: *****
+container name: ****
+azure tenant id: ****
+queue name: ****
+queue URL: ****
+URL endpoint: ****
+*/
+
+USE ROLE accountadmin;
+
+DROP INTEGRATION IF EXISTS bpo_azure_integration;
+DROP INTEGRATION IF EXISTS bpo_azure_notification_int;
+DROP STAGE bpo_azure_stage;
+
+-- 
+CREATE STORAGE INTEGRATION bpo_azure_integration
+  TYPE = EXTERNAL_STAGE
+  STORAGE_PROVIDER = 'AZURE'
+  ENABLED = TRUE
+  AZURE_TENANT_ID = ****
+  STORAGE_ALLOWED_LOCATIONS = ****
+
+DESC INTEGRATION bpo_azure_integration;
+
+
+CREATE NOTIFICATION INTEGRATION bpo_azure_notification_int
+  ENABLED = TRUE
+  TYPE = QUEUE
+  NOTIFICATION_PROVIDER = AZURE_STORAGE_QUEUE
+  AZURE_STORAGE_QUEUE_PRIMARY_URI = ****
+  AZURE_TENANT_ID = ****
+
+DESC INTEGRATION bpo_azure_notification_int;
+
+-- 
+USE DATABASE bpo_db;
+USE SCHEMA bpo_db.bronze;
+
+-- defining csv format
+create file format csv_format
+    type = 'csv' 
+    field_delimiter = ','
+    skip_header = 1
+    null_if = ('NULL','null','')
+    empty_field_as_null = true;
+-- 
+
+-- azure stage creation
+CREATE OR REPLACE STAGE bpo_azure_stage
+  URL = ****
+  STORAGE_INTEGRATION = bpo_azure_integration
+  FILE_FORMAT = csv_format;
+
+list @bpo_azure_stage
+
+-- azure stage connected; the raw files are visible!
+
+-- defining JSON format
+create or replace file format json_format
+    type = 'JSON'
+    strip_outer_array = FALSE;
+
+-- bronze table creation; raw_agents, raw_tickets, raw_performance, raw_queue_logs
+-- raw_agents
+
+/*
+for troubleshooting
+drop table bronze.raw_agents
+drop table bronze.raw_tickets
+drop table bronze.raw_performance 
+drop table bronze.raw_queue_logs 
+*/
+
+create or replace table bronze.raw_agents (
+        agent_id                varchar(10),
+        name                    varchar(100),
+        team                    varchar(50),
+        site                    varchar(50),
+        tenure_years            number(4,1),
+        hire_date               date,
+        email                   varchar(100),
+        status                  varchar(20),
+        source_file             varchar(200),
+        loaded_at               timestamp_ntz default current_timestamp()
+);
+
+-- raw_tickets
+create or replace table bronze.raw_tickets (
+        ticket_id               varchar(10),
+        agent_id                varchar(10),
+        ticket_type             varchar(50),
+        priority                varchar(20),
+        status                  varchar(20),
+        resolution_time_mins    number(10,2),
+        created_date            date,
+        category                varchar(50),
+        source_file             varchar(200),
+        loaded_at               timestamp_ntz default current_timestamp()
+        
+);
+
+-- raw_performance
+create or replace table bronze.raw_performance (
+        perf_id                 varchar(10),
+        agent_id                varchar(10),
+        date                    date,
+        aht_mins                number(10,2),
+        accuracy_pct            number(5,2),
+        tickets_handled         int,
+        quality_score           int,
+        source_file             varchar(200),
+        loaded_at               timestamp_ntz default current_timestamp()
+);
+
+-- raw queue logs
+-- drop table bronze.raw_queue_logs
+create or replace table bronze.raw_queue_logs (
+        raw_data                variant,
+        source_file             varchar(200),
+        loaded_at               timestamp_ntz default current_timestamp()
+);
+
+
+-- quarantine table creation
+-- for troubleshooting 
+-- drop table bronze.quarantine_records
+create or replace table bronze.quarantine_records (
+        quarantine_id           number autoincrement,
+        source_table            varchar(50),
+        raw_data                variant,
+        error_reason            varchar(500),
+        retry_count             int default 0,
+        status                  varchar(20) default 'pending',
+        quarantined_at          timestamp_ntz default current_timestamp(),
+        resolved_at             timestamp_ntz
+);
+
+
