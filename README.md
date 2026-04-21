@@ -20,7 +20,7 @@ Azure Blob Storage (raw files)
 ┌─────────────────────────────────────────┐
 │           BRONZE LAYER                  │
 │  Raw ingestion via Snowpipe + Event Grid│
-│  Self-healing quarantine system         │
+│          │
 └─────────────────────────────────────────┘
         │
         ▼
